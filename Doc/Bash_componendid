@@ -1,0 +1,63 @@
+01
+Peata kõik konteinerid
+Kõik töötavad konteinerid tuleb enne kustutamist peatada.
+
+docker stop $(docker ps -aq)
+
+docker stop $(docker ps -aq)
+
+Kui mõni annab vea, ignoreeri — järgmine samm kustutab need niikuinii.
+
+02
+Kustuta kõik konteinerid
+Eemaldab kõik konteinerid, peatatud ja töötavad.
+
+docker rm -f $(docker ps -aq)
+
+docker rm -f $(docker ps -aq)
+
+03
+Kustuta kõik Docker pildid
+Eemaldab kõik lokaalsed Docker image’id.
+
+docker rmi -f $(docker images -aq)
+
+docker rmi -f $(docker images -aq)
+
+04
+Kustuta kõik Docker mahud
+Mahud hoiavad andmeid — nende kustutamine teeb süsteemi tõesti tühjaks.
+
+docker volume rm $(docker volume ls -q)
+
+docker volume rm $(docker volume ls -q)
+
+05
+Kustuta kõik Docker võrgud
+Eemaldab kõik kasutaja loodud võrgud.
+
+docker network rm $(docker network ls -q)
+
+docker network rm $(docker network ls -q)
+
+Vaikimisi võrgud (bridge, host, none) ei kustu — see on normaalne.
+
+06
+Puhasta dangling objektid ja cache
+Täielik puhastus
+Eemaldab kõik üleliigsed build cache’d ja vahemälud.
+
+docker system prune -a --volumes -f
+
+docker system prune -a --volumes -f
+
+07
+(Valikuline) Kustuta Docker konfiguratsioonid
+Ohtlik
+Kui soovid Dockerit nagu värskelt installitud olekus.
+
+Linux: sudo rm -rf /var/lib/docker
+
+Windows WSL2: wsl --shutdown
+
+Windows Desktop: Reset to factory defaults

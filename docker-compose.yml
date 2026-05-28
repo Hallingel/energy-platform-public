@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+
+  energy_db:
+    image: postgres:15
+    container_name: energy_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: energy
+    volumes:
+      - energy_db_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  importer_entsoe:
+    build: ./importer_entsoe
+    container_name: energy-platform-importer_entsoe
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  importer_weather:
+    build: ./importer_weather
+    container_name: energy-platform-importer_weather
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  importer_price:
+    build: ./importer_price
+    container_name: energy-platform-importer_price
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  importer_solar_elering:
+    build: ./importer_solar_elering
+    container_name: energy-platform-importer_solar_elering
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  importer_solar_eu:
+    build: ./importer_solar_eu
+    container_name: energy-platform-importer_solar_eu
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  importer_solar_radiation:
+    build: ./importer_solar_radiation
+    container_name: energy-platform-importer_solar_radiation
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+  energy_dash:
+    build: ./dash_app
+    container_name: energy_dash
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8050:8050"
+    depends_on:
+      energy_db:
+        condition: service_healthy
+
+volumes:
+  energy_db_data:

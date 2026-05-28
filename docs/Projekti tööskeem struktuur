@@ -1,0 +1,29 @@
+energy-platform/
+│
+├── docker-compose.yml
+│
+├── db/
+│   └── init/
+│       └── 01_schema.sql
+│
+├── importer_price/
+│   ├── Dockerfile
+│   └── main.py
+│
+├── importer_weather/
+│   ├── Dockerfile
+│   └── main.py
+│
+├── importer_solar/
+│   ├── Dockerfile
+│   └── main.py
+│
+├── importer_daily/
+│   ├── Dockerfile
+│   └── main.py
+│
+├── dash_app/
+│   ├── Dockerfile
+│   └── app.py
+│
+└── README.md
