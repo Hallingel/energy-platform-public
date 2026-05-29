@@ -1,55 +1,63 @@
 import os
 import requests
 import psycopg2
-from datetime import datetime, timezone
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
 WEATHER_API_URL = os.getenv("WEATHER_API_URL")
 
+
+def ensure_columns():
+    """Lisab shortwave_radiation veeru, kui seda pole."""
+    conn = psycopg2.connect(DB_URL)
+    cur = conn.cursor()
+
+    cur.execute("""
+        ALTER TABLE weather_15min
+        ADD COLUMN IF NOT EXISTS shortwave_radiation DOUBLE PRECISION;
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
 def fetch_weather():
-    print("Pärin Open‑Meteo API...")
-    r = requests.get(WEATHER_API_URL)
-    print("HTTP:", r.status_code)
-
+    """Laeb Open-Meteo API andmed."""
+    r = requests.get(WEATHER_API_URL, timeout=10)
     if r.status_code != 200:
-        print(r.text)
+        print("WEATHER API ERROR:", r.text)
         return None
-
     return r.json()
 
+
 def parse_weather(data):
+    """Parsib Open-Meteo JSON-i."""
     if data is None:
         return []
 
-    hourly = data["hourly"]
-
-    timestamps = hourly["time"]
-    wind_speed = hourly["wind_speed_10m"]
-    wind_gust = hourly["wind_gusts_10m"]
-    wind_dir = hourly["wind_direction_10m"]
-    temp = hourly["temperature_2m"]
+    hourly = data.get("hourly", {})
+    times = hourly.get("time", [])
+    wind = hourly.get("wind_speed_10m", [])
+    radiation = hourly.get("shortwave_radiation", [])
 
     rows = []
+    for i in range(len(times)):
+        ts = datetime.fromisoformat(times[i])
+        ws = wind[i] if i < len(wind) else None
+        rad = radiation[i] if i < len(radiation) else None
+        rows.append((ts, ws, rad))
 
-    for i in range(len(timestamps)):
-        # Open‑Meteo annab Eesti aja → teisendame UTC‑ks
-        ts_local = datetime.fromisoformat(timestamps[i])
-        ts_utc = ts_local.astimezone(timezone.utc)
-
-        rows.append((
-            ts_utc,
-            wind_speed[i],
-            wind_gust[i],
-            wind_dir[i],
-            temp[i]
-        ))
-
-    print("Leitud ridu:", len(rows))
     return rows
 
+
 def insert_rows(rows):
+    """Salvestab andmed PostgreSQL-i."""
     if not rows:
-        print("Pole ridu.")
+        print("No weather rows to insert")
         return
 
     conn = psycopg2.connect(DB_URL)
@@ -57,25 +65,25 @@ def insert_rows(rows):
 
     for r in rows:
         cur.execute("""
-            INSERT INTO weather_15min (ts, wind_speed_ms, wind_gust_ms, wind_direction_deg, temperature_c)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO weather_15min (ts, wind_speed_ms, shortwave_radiation)
+            VALUES (%s, %s, %s)
             ON CONFLICT (ts) DO UPDATE
             SET wind_speed_ms = EXCLUDED.wind_speed_ms,
-                wind_gust_ms = EXCLUDED.wind_gust_ms,
-                wind_direction_deg = EXCLUDED.wind_direction_deg,
-                temperature_c = EXCLUDED.temperature_c;
+                shortwave_radiation = EXCLUDED.shortwave_radiation;
         """, r)
 
     conn.commit()
     cur.close()
     conn.close()
+    print("Inserted weather rows:", len(rows))
 
-    print("Kirjutasin ridu:", len(rows))
 
 def main():
+    ensure_columns()
     data = fetch_weather()
     rows = parse_weather(data)
     insert_rows(rows)
+
 
 if __name__ == "__main__":
     main()

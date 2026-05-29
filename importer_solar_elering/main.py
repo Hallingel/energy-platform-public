@@ -1,4 +1,4 @@
-import os, time, requests
+import os, requests
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -50,16 +50,14 @@ def insert(c, rows):
 
 
 def main():
-    while True:
-        try:
-            c = conn()
-            rows = fetch()
-            insert(c, rows)
-            print("solar_elering rows:", len(rows))
-            c.close()
-        except Exception as e:
-            print("solar_elering ERROR:", e)
-        time.sleep(3600)
+    try:
+        c = conn()
+        rows = fetch()
+        insert(c, rows)
+        print("solar_elering rows:", len(rows))
+        c.close()
+    except Exception as e:
+        print("solar_elering ERROR:", e)
 
 
 if __name__ == "__main__":

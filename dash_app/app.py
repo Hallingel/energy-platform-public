@@ -1,7 +1,6 @@
 import os
 import pandas as pd
 from sqlalchemy import create_engine
-
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.express as px
@@ -10,75 +9,83 @@ import plotly.express as px
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 
-
-def load_df(sql):
-    df = pd.read_sql(sql, engine)
-    if "ts" in df.columns:
-        df["ts"] = pd.to_datetime(df["ts"], utc=True).dt.floor("15min")
-    return df
-
+def safe_load(sql):
+    try:
+        df = pd.read_sql(sql, engine)
+        if "ts" in df.columns:
+            df = df.sort_values("ts")
+        return df
+    except Exception as e:
+        print("SQL ERROR:", e)
+        return pd.DataFrame()
 
 # --- Dash rakendus ---
 app = Dash(__name__)
 
 app.layout = html.Div([
-    html.H1("Energia Dashboard – Päikesejaamad", style={"textAlign": "center"}),
+    html.H1("Energia Dashboard – 6 graafikut", style={"textAlign": "center"}),
 
-    dcc.Graph(id="graph_weather"),
-    dcc.Graph(id="graph_el_price"),
-    dcc.Graph(id="graph_el_solar"),
-    dcc.Graph(id="graph_entsoe_solar"),
-    dcc.Graph(id="graph_solar_all"),
+    dcc.Graph(id="g_weather"),        # 1) Tuule kiirus
+    dcc.Graph(id="g_om_solar"),       # 2) Päikese kiirgus
+    dcc.Graph(id="g_elering_solar"),  # 3) Elering tootmine
+    dcc.Graph(id="g_entsoe_solar"),   # 4) ENTSO-E tootmine
+    dcc.Graph(id="g_price"),          # 5) Hind
+    dcc.Graph(id="g_all"),            # 6) Koondgraafik
 
     dcc.Interval(id="interval", interval=60 * 1000, n_intervals=0)
 ])
 
-
 @app.callback(
     [
-        Output("graph_weather", "figure"),
-        Output("graph_el_price", "figure"),
-        Output("graph_el_solar", "figure"),
-        Output("graph_entsoe_solar", "figure"),
-        Output("graph_solar_all", "figure"),
+        Output("g_weather", "figure"),
+        Output("g_om_solar", "figure"),
+        Output("g_elering_solar", "figure"),
+        Output("g_entsoe_solar", "figure"),
+        Output("g_price", "figure"),
+        Output("g_all", "figure"),
     ],
     [Input("interval", "n_intervals")]
 )
-def update_graphs(_):
+def update(_):
 
-    # --- Open‑Meteo ---
-    df_weather = load_df("""
-        SELECT ts, wind_speed_ms
+    # 1) Ilm (tuule kiirus + päikese kiirgus)
+    df_weather = safe_load("""
+        SELECT ts, wind_speed_ms, shortwave_radiation
         FROM weather_15min
         ORDER BY ts DESC
         LIMIT 500;
     """)
 
-    # --- Elering hind ---
-    df_price = load_df("""
+    # 2) Hind
+    df_price = safe_load("""
         SELECT ts, price_eur_mwh
         FROM price_hour
         ORDER BY ts DESC
         LIMIT 200;
     """)
 
-    # --- Elering päikese tootmine ---
-    df_se = load_df("""
+    # 3) Elering päikese tootmine
+    df_elering = safe_load("""
         SELECT ts, production_mw
         FROM solar_elering_15min
         ORDER BY ts DESC
         LIMIT 500;
     """)
 
-    # --- ENTSO‑E päikese tootmine ---
-    df_entsoe = load_df("""
+    # 4) ENTSO‑E päikese tootmine
+    df_entsoe = safe_load("""
         SELECT ts, production_mw
-        FROM entsoe_solar_15min
+        FROM entsoe_solar_wind_15min
+        WHERE source = 'SOLAR'
         ORDER BY ts DESC
         LIMIT 500;
     """)
 
-    # --- 1) Ilm ---
+    # 5) Open‑Meteo päikese kiirgus
+    df_om_solar = df_weather[["ts", "shortwave_radiation"]].dropna()
+
+    # --- Graafikud ---
+
     fig_weather = px.line(
         df_weather,
         x="ts",
@@ -86,53 +93,61 @@ def update_graphs(_):
         title="Open‑Meteo: Tuule kiirus (m/s)"
     )
 
-    # --- 2) Hind ---
-    fig_el_price = px.line(
+    fig_om_solar = px.line(
+        df_om_solar,
+        x="ts",
+        y="shortwave_radiation",
+        title="Open‑Meteo: Päikese kiirgus (W/m²)"
+    )
+
+    fig_elering = px.line(
+        df_elering,
+        x="ts",
+        y="production_mw",
+        title="Elering: Päikeseparkide tootlus (MW)"
+    )
+
+    fig_entsoe = px.line(
+        df_entsoe,
+        x="ts",
+        y="production_mw",
+        title="ENTSO‑E: Päikeseparkide tootlus (MW)"
+    )
+
+    fig_price = px.line(
         df_price,
         x="ts",
         y="price_eur_mwh",
         title="Elering: Börsihind (€/MWh)"
     )
 
-    # --- 3) Elering päikese tootmine ---
-    fig_el_solar = px.line(
-        df_se,
-        x="ts",
-        y="production_mw",
-        title="Elering: Päikesejaamade tootmine (MW)"
-    )
-
-    # --- 4) ENTSO‑E päikese tootmine ---
-    fig_entsoe_solar = px.line(
-        df_entsoe,
-        x="ts",
-        y="production_mw",
-        title="ENTSO‑E: Päikesejaamade tootmine (MW)"
-    )
-
-    # --- 5) Koondgraafik ---
-    df_solar_all = (
+    # 6) Koondgraafik
+    df_all = (
         df_entsoe.rename(columns={"production_mw": "entsoe_mw"})
-        .merge(df_se.rename(columns={"production_mw": "elering_mw"}), on="ts", how="outer")
+        .merge(df_elering.rename(columns={"production_mw": "elering_mw"}), on="ts", how="outer")
         .merge(df_price, on="ts", how="outer")
         .sort_values("ts")
     )
 
-    fig_solar_all = px.line(
-        df_solar_all,
+    for col in ["entsoe_mw", "elering_mw", "price_eur_mwh"]:
+        if col in df_all.columns:
+            df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
+
+    fig_all = px.line(
+        df_all,
         x="ts",
         y=["entsoe_mw", "elering_mw", "price_eur_mwh"],
-        title="Päikeseparkide koondgraafik (ENTSO‑E, Elering, hind)"
+        title="Koondgraafik: ENTSO‑E (SOLAR) + Elering + hind"
     )
 
     return (
         fig_weather,
-        fig_el_price,
-        fig_el_solar,
-        fig_entsoe_solar,
-        fig_solar_all
+        fig_om_solar,
+        fig_elering,
+        fig_entsoe,
+        fig_price,
+        fig_all
     )
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8050)

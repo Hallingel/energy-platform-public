@@ -1,28 +1,72 @@
-# Python
+# -----------------------------
+# PYTHON
+# -----------------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Logs
+*.egg-info/
+*.egg
 *.log
 
-# Environments
+# Virtual environments
+venv/
+env/
+.venv/
+
+# -----------------------------
+# ENVIRONMENT FILES
+# -----------------------------
 .env
 .env.*
+!.env.example
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# Docker
+# -----------------------------
+# DOCKER
+# -----------------------------
+# Docker volumes
+energy-platform_db_data/
+db_data/
 *.pid
-*.seed
-*.bak
 
-# IDE
+# Docker build artifacts
+**/Dockerfile~
+**/docker-compose.override.yml
+
+# -----------------------------
+# LOG FILES
+# -----------------------------
+logs/
+*.log
+
+# -----------------------------
+# DATA FILES
+# -----------------------------
+Data/
+data/
+*.csv
+*.xlsx
+
+# -----------------------------
+# IDE / EDITOR
+# -----------------------------
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# Cache
+# -----------------------------
+# TEST / TEMP
+# -----------------------------
+testrepo/
+tmp/
+temp/
+__tests__/
 .cache/
+
+# -----------------------------
+# OS JUNK
+# -----------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
