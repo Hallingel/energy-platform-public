@@ -1,6 +1,5 @@
 -- ============================================
---  ENERGY PLATFORM – LÕPLIK INIT.SQL
---  Loob kõik tabelid importeritele ja Dashile
+--  ENERGY PLATFORM – LÕPLIK INIT.SQL (PRO + CSV)
 -- ============================================
 
 -- ===========================
@@ -70,6 +69,33 @@ CREATE TABLE IF NOT EXISTS solar_radiation_15min (
     radiation_wm2 numeric,
     PRIMARY KEY (solar_site_id, ts)
 );
+
+-- ============================================
+-- CSV IMPORT (15 min)
+-- ============================================
+
+-- RAW CSV STACK
+CREATE TABLE IF NOT EXISTS raw_consumption (
+    id serial PRIMARY KEY,
+    ts timestamptz,
+    kwh numeric,
+    teenus text,
+    uniqkey text,
+    source_file text,
+    loaded_at timestamptz DEFAULT now()
+);
+
+-- CLEAN CSV TABLE
+CREATE TABLE IF NOT EXISTS consumption_15min (
+    ts timestamptz NOT NULL,
+    teenus text NOT NULL,
+    kwh numeric,
+    PRIMARY KEY (ts, teenus)
+);
+
+-- Lisa uniqkey unikaalsus RAW tabelile
+ALTER TABLE raw_consumption
+    ADD CONSTRAINT raw_consumption_uniq UNIQUE (uniqkey);
 
 -- ============================================
 -- DONE

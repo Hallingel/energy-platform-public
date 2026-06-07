@@ -24,10 +24,8 @@ env/
 # -----------------------------
 # DOCKER
 # -----------------------------
-# Docker volumes
-energy-platform_db_data/
-db_data/
-*.pid
+# PostgreSQL volume (õige nimi!)
+pgdata/
 
 # Docker build artifacts
 **/Dockerfile~

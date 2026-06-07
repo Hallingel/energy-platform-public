@@ -21,7 +21,8 @@ services:
       retries: 10
 
   dash_app:
-    build: ./dash_app
+    build:
+      context: ./dash_app
     container_name: energy_dash
     restart: always
     env_file:
@@ -32,8 +33,23 @@ services:
     ports:
       - "8050:8050"
 
+  importer_csv:
+    build:
+      context: ./importer_csv
+    container_name: importer_csv
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+    depends_on:
+      energy_db:
+        condition: service_healthy
+    command: ["python", "/app/main.py"]
+
   importer_weather:
-    build: ./importer_weather
+    build:
+      context: ./importer_weather
     container_name: importer_weather
     restart: always
     env_file:
@@ -43,7 +59,8 @@ services:
         condition: service_healthy
 
   importer_price:
-    build: ./importer_price
+    build:
+      context: ./importer_price
     container_name: importer_price
     restart: always
     env_file:
@@ -52,18 +69,9 @@ services:
       energy_db:
         condition: service_healthy
 
-  importer_entsoe:
-    build: ./importer_entsoe
-    container_name: importer_entsoe
-    restart: always
-    env_file:
-      - .env
-    depends_on:
-      energy_db:
-        condition: service_healthy
-
   importer_solar_elering:
-    build: ./importer_solar_elering
+    build:
+      context: ./importer_solar_elering
     container_name: importer_solar_elering
     restart: always
     env_file:
@@ -72,19 +80,10 @@ services:
       energy_db:
         condition: service_healthy
 
-  importer_solar_eu:
-    build: ./importer_solar_eu
-    container_name: importer_solar_eu
-    restart: always
-    env_file:
-      - .env
-    depends_on:
-      energy_db:
-        condition: service_healthy
-
-  importer_solar_radiation:
-    build: ./importer_solar_radiation
-    container_name: importer_solar_radiation
+  scheduler:
+    build:
+      context: ./scheduler
+    container_name: scheduler
     restart: always
     env_file:
       - .env

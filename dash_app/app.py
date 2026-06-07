@@ -4,6 +4,16 @@ from sqlalchemy import create_engine
 from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.express as px
+import plotly.graph_objects as go
+
+# --- Teenuse värvikaart ---
+SERVICE_COLORS = {
+    "elekter": "blue",
+    "elering": "green",
+    "gaas": "red",
+    "vesi": "purple",
+    "default": "gray"
+}
 
 # --- Andmebaasi ühendus ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -23,14 +33,13 @@ def safe_load(sql):
 app = Dash(__name__)
 
 app.layout = html.Div([
-    html.H1("Energia Dashboard – 6 graafikut", style={"textAlign": "center"}),
+    html.H1("Energia Dashboard – 5 graafikut", style={"textAlign": "center"}),
 
-    dcc.Graph(id="g_weather"),        # 1) Tuule kiirus
-    dcc.Graph(id="g_om_solar"),       # 2) Päikese kiirgus
-    dcc.Graph(id="g_elering_solar"),  # 3) Elering tootmine
-    dcc.Graph(id="g_entsoe_solar"),   # 4) ENTSO-E tootmine
-    dcc.Graph(id="g_price"),          # 5) Hind
-    dcc.Graph(id="g_all"),            # 6) Koondgraafik
+    dcc.Graph(id="g_weather"),          # 1) Tuule kiirus
+    dcc.Graph(id="g_om_solar"),         # 2) Päikese kiirgus
+    dcc.Graph(id="g_elering_solar"),    # 3) Elering tootmine
+    dcc.Graph(id="g_price"),            # 4) Hind
+    dcc.Graph(id="g_csv_solar"),        # 5) Tarbimine CSV -> Päikese kiirgus
 
     dcc.Interval(id="interval", interval=60 * 1000, n_intervals=0)
 ])
@@ -40,9 +49,8 @@ app.layout = html.Div([
         Output("g_weather", "figure"),
         Output("g_om_solar", "figure"),
         Output("g_elering_solar", "figure"),
-        Output("g_entsoe_solar", "figure"),
         Output("g_price", "figure"),
-        Output("g_all", "figure"),
+        Output("g_csv_solar", "figure"),
     ],
     [Input("interval", "n_intervals")]
 )
@@ -72,17 +80,19 @@ def update(_):
         LIMIT 500;
     """)
 
-    # 4) ENTSO‑E päikese tootmine
-    df_entsoe = safe_load("""
-        SELECT ts, production_mw
-        FROM entsoe_solar_wind_15min
-        WHERE source = 'SOLAR'
-        ORDER BY ts DESC
-        LIMIT 500;
+    # 4) CSV tarbimine + päikese kiirgus JOIN
+    df_csv_solar = safe_load("""
+        SELECT 
+            c.ts,
+            c.teenus,
+            c.kwh,
+            w.shortwave_radiation
+        FROM consumption_15min c
+        LEFT JOIN weather_15min w
+            ON c.ts = w.ts
+        ORDER BY c.ts ASC
+        LIMIT 2000;
     """)
-
-    # 5) Open‑Meteo päikese kiirgus
-    df_om_solar = df_weather[["ts", "shortwave_radiation"]].dropna()
 
     # --- Graafikud ---
 
@@ -94,7 +104,7 @@ def update(_):
     )
 
     fig_om_solar = px.line(
-        df_om_solar,
+        df_weather,
         x="ts",
         y="shortwave_radiation",
         title="Open‑Meteo: Päikese kiirgus (W/m²)"
@@ -107,13 +117,6 @@ def update(_):
         title="Elering: Päikeseparkide tootlus (MW)"
     )
 
-    fig_entsoe = px.line(
-        df_entsoe,
-        x="ts",
-        y="production_mw",
-        title="ENTSO‑E: Päikeseparkide tootlus (MW)"
-    )
-
     fig_price = px.line(
         df_price,
         x="ts",
@@ -121,32 +124,63 @@ def update(_):
         title="Elering: Börsihind (€/MWh)"
     )
 
-    # 6) Koondgraafik
-    df_all = (
-        df_entsoe.rename(columns={"production_mw": "entsoe_mw"})
-        .merge(df_elering.rename(columns={"production_mw": "elering_mw"}), on="ts", how="outer")
-        .merge(df_price, on="ts", how="outer")
-        .sort_values("ts")
-    )
+    # 5) Tarbimine (iga teenus oma värviga) + päikese kiirgus teisel teljel
+    if df_csv_solar.empty:
+        fig_csv_solar = go.Figure()
+        fig_csv_solar.update_layout(
+            title="Tarbimine (CSV) vs Päikese kiirgus (W/m²) – andmeid pole"
+        )
+    else:
+        fig_csv_solar = go.Figure()
 
-    for col in ["entsoe_mw", "elering_mw", "price_eur_mwh"]:
-        if col in df_all.columns:
-            df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
+        # Iga teenus oma värviga
+        for teenus in df_csv_solar["teenus"].dropna().unique():
+            df_t = df_csv_solar[df_csv_solar["teenus"] == teenus]
 
-    fig_all = px.line(
-        df_all,
-        x="ts",
-        y=["entsoe_mw", "elering_mw", "price_eur_mwh"],
-        title="Koondgraafik: ENTSO‑E (SOLAR) + Elering + hind"
-    )
+            color = SERVICE_COLORS.get(teenus, SERVICE_COLORS["default"])
+
+            fig_csv_solar.add_trace(
+                go.Scatter(
+                    x=df_t["ts"],
+                    y=df_t["kwh"],
+                    mode="lines",
+                    name=f"Tarbimine – {teenus}",
+                    yaxis="y1",
+                    line=dict(color=color)
+                )
+            )
+
+        # Päikese kiirgus teisel teljel
+        if "shortwave_radiation" in df_csv_solar.columns:
+            fig_csv_solar.add_trace(
+                go.Scatter(
+                    x=df_csv_solar["ts"],
+                    y=df_csv_solar["shortwave_radiation"],
+                    mode="lines",
+                    name="Päikese kiirgus (W/m²)",
+                    yaxis="y2",
+                    line=dict(color="orange", dash="dot")
+                )
+            )
+
+        fig_csv_solar.update_layout(
+            title="Tarbimine (CSV) ja Päikese kiirgus (W/m²)",
+            xaxis=dict(title="Aeg"),
+            yaxis=dict(title="Tarbimine (kWh)"),
+            yaxis2=dict(
+                title="Päikese kiirgus (W/m²)",
+                overlaying="y",
+                side="right"
+            ),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+        )
 
     return (
         fig_weather,
         fig_om_solar,
         fig_elering,
-        fig_entsoe,
         fig_price,
-        fig_all
+        fig_csv_solar
     )
 
 if __name__ == "__main__":
