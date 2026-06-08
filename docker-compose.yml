@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   energy_db:
     image: postgres:15

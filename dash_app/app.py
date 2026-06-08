@@ -5,15 +5,16 @@ from dash import Dash, dcc, html
 from dash.dependencies import Input, Output
 import plotly.express as px
 import plotly.graph_objects as go
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
 # --- Teenuse värvikaart ---
 SERVICE_COLORS = {
-    "elekter": "blue",
-    "elering": "green",
-    "gaas": "red",
-    "vesi": "purple",
-    "default": "gray"
+    f"elekter_{i}": px.colors.qualitative.Plotly[i % 10]
+    for i in range(1, 21)
 }
+SERVICE_COLORS["elekter"] = "blue"
+SERVICE_COLORS["default"] = "gray"
 
 # --- Andmebaasi ühendus ---
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -33,154 +34,225 @@ def safe_load(sql):
 app = Dash(__name__)
 
 app.layout = html.Div([
-    html.H1("Energia Dashboard – 5 graafikut", style={"textAlign": "center"}),
+
+    html.H1("Energia Dashboard – PUBLIC (5 graafikut)", style={"textAlign": "center"}),
+
+    # --- Perioodi filter ---
+    html.Div([
+        dcc.Dropdown(
+            id="period-type",
+            options=[
+                {"label": "Vaba", "value": "free"},
+                {"label": "Päev", "value": "day"},
+                {"label": "Kuu", "value": "month"},
+                {"label": "Aasta", "value": "year"},
+            ],
+            value="free",
+            clearable=False,
+            style={"width": "200px", "display": "inline-block", "marginRight": "10px"}
+        ),
+
+        dcc.Input(
+            id="period-n",
+            type="number",
+            value=1,
+            min=1,
+            step=1,
+            style={"width": "80px", "display": "inline-block"}
+        ),
+
+        dcc.Store(id="period-range")
+    ], style={"marginBottom": "20px"}),
 
     dcc.Graph(id="g_weather"),          # 1) Tuule kiirus
-    dcc.Graph(id="g_om_solar"),         # 2) Päikese kiirgus
-    dcc.Graph(id="g_elering_solar"),    # 3) Elering tootmine
-    dcc.Graph(id="g_price"),            # 4) Hind
-    dcc.Graph(id="g_csv_solar"),        # 5) Tarbimine CSV -> Päikese kiirgus
+    dcc.Graph(id="g_elering_solar"),    # 2) Elering tootmine
+    dcc.Graph(id="g_price"),            # 3) Börsihind
+    dcc.Graph(id="g_consumption"),      # 4) Tarbimine teenuste kaupa
+    dcc.Graph(id="g_cons_vs_solar"),    # 5) Tarbimine vs Päike (JOIN)
 
     dcc.Interval(id="interval", interval=60 * 1000, n_intervals=0)
 ])
 
+# --- Perioodi arvutamine ---
+@app.callback(
+    Output("period-range", "data"),
+    Input("period-type", "value"),
+    Input("period-n", "value")
+)
+def compute_period(period_type, n):
+    now = datetime.utcnow()
+
+    if period_type == "free":
+        return {"start": None, "end": None}
+
+    if period_type == "day":
+        start = now - timedelta(days=n)
+    elif period_type == "month":
+        start = now - relativedelta(months=n)
+    elif period_type == "year":
+        start = now - relativedelta(years=n)
+    else:
+        start = None
+
+    return {
+        "start": start.isoformat(),
+        "end": now.isoformat()
+    }
+
+# --- Graafikute uuendamine ---
 @app.callback(
     [
         Output("g_weather", "figure"),
-        Output("g_om_solar", "figure"),
         Output("g_elering_solar", "figure"),
         Output("g_price", "figure"),
-        Output("g_csv_solar", "figure"),
+        Output("g_consumption", "figure"),
+        Output("g_cons_vs_solar", "figure"),
     ],
-    [Input("interval", "n_intervals")]
+    [
+        Input("interval", "n_intervals"),
+        Input("period-range", "data")
+    ]
 )
-def update(_):
+def update(_, period):
 
-    # 1) Ilm (tuule kiirus + päikese kiirgus)
-    df_weather = safe_load("""
-        SELECT ts, wind_speed_ms, shortwave_radiation
+    # --- Perioodi SQL helper ---
+    def period_sql(base_sql):
+        if period and period["start"]:
+            return f"""
+                {base_sql}
+                WHERE ts BETWEEN '{period["start"]}' AND '{period["end"]}'
+                ORDER BY ts ASC;
+            """
+        else:
+            return f"""
+                {base_sql}
+                ORDER BY ts ASC
+                LIMIT 2000;
+            """
+
+    # 1) Ilm (weather_15min)
+    df_weather = safe_load(period_sql("""
+        SELECT ts, wind_speed_ms
         FROM weather_15min
-        ORDER BY ts DESC
-        LIMIT 500;
-    """)
+    """))
 
-    # 2) Hind
-    df_price = safe_load("""
-        SELECT ts, price_eur_mwh
-        FROM price_hour
-        ORDER BY ts DESC
-        LIMIT 200;
-    """)
-
-    # 3) Elering päikese tootmine
-    df_elering = safe_load("""
+    # 2) Elering päikese tootmine
+    df_elering = safe_load(period_sql("""
         SELECT ts, production_mw
         FROM solar_elering_15min
-        ORDER BY ts DESC
-        LIMIT 500;
-    """)
+    """))
 
-    # 4) CSV tarbimine + päikese kiirgus JOIN
-    df_csv_solar = safe_load("""
+    # 3) Börsihind
+    df_price = safe_load(period_sql("""
+        SELECT ts, price_eur_mwh
+        FROM price_hour
+    """))
+
+    # 4) Tarbimine teenuste kaupa
+    df_cons = safe_load(period_sql("""
+        SELECT ts, teenus, kwh
+        FROM consumption_15min
+    """))
+
+    # 5) Tarbimine vs Päike (JOIN)
+    df_cons_solar = safe_load(period_sql("""
         SELECT 
             c.ts,
             c.teenus,
             c.kwh,
-            w.shortwave_radiation
+            e.production_mw
         FROM consumption_15min c
-        LEFT JOIN weather_15min w
-            ON c.ts = w.ts
-        ORDER BY c.ts ASC
-        LIMIT 2000;
-    """)
+        LEFT JOIN solar_elering_15min e
+            ON c.ts = e.ts
+    """))
 
     # --- Graafikud ---
-
-    fig_weather = px.line(
-        df_weather,
-        x="ts",
-        y="wind_speed_ms",
-        title="Open‑Meteo: Tuule kiirus (m/s)"
-    )
-
-    fig_om_solar = px.line(
-        df_weather,
-        x="ts",
-        y="shortwave_radiation",
-        title="Open‑Meteo: Päikese kiirgus (W/m²)"
-    )
-
-    fig_elering = px.line(
-        df_elering,
-        x="ts",
-        y="production_mw",
-        title="Elering: Päikeseparkide tootlus (MW)"
-    )
-
-    fig_price = px.line(
-        df_price,
-        x="ts",
-        y="price_eur_mwh",
-        title="Elering: Börsihind (€/MWh)"
-    )
-
-    # 5) Tarbimine (iga teenus oma värviga) + päikese kiirgus teisel teljel
-    if df_csv_solar.empty:
-        fig_csv_solar = go.Figure()
-        fig_csv_solar.update_layout(
-            title="Tarbimine (CSV) vs Päikese kiirgus (W/m²) – andmeid pole"
-        )
+    # 1) Ilm
+    if df_weather.empty:
+        fig_weather = go.Figure()
+        fig_weather.update_layout(title="Tuule kiirus – andmeid pole")
     else:
-        fig_csv_solar = go.Figure()
+        fig_weather = px.line(df_weather, x="ts", y="wind_speed_ms", title="Tuule kiirus (m/s)")
 
-        # Iga teenus oma värviga
-        for teenus in df_csv_solar["teenus"].dropna().unique():
-            df_t = df_csv_solar[df_csv_solar["teenus"] == teenus]
+    # 2) Elering päike
+    if df_elering.empty:
+        fig_elering = go.Figure()
+        fig_elering.update_layout(title="Elering päikese tootmine – andmeid pole")
+    else:
+        fig_elering = px.line(df_elering, x="ts", y="production_mw", title="Elering: Päikese tootlus (MW)")
 
+    # 3) Börsihind
+    if df_price.empty:
+        fig_price = go.Figure()
+        fig_price.update_layout(title="Börsihind – andmeid pole")
+    else:
+        fig_price = px.line(df_price, x="ts", y="price_eur_mwh", title="Börsihind (€/MWh)")
+
+    # 4) Tarbimine teenuste kaupa
+    if df_cons.empty:
+        fig_cons = go.Figure()
+        fig_cons.update_layout(title="Tarbimine – andmeid pole")
+    else:
+        fig_cons = go.Figure()
+        for teenus in df_cons["teenus"].unique():
+            df_t = df_cons[df_cons["teenus"] == teenus]
             color = SERVICE_COLORS.get(teenus, SERVICE_COLORS["default"])
+            fig_cons.add_trace(go.Scatter(
+                x=df_t["ts"],
+                y=df_t["kwh"],
+                mode="lines",
+                name=teenus,
+                line=dict(color=color)
+            ))
+        fig_cons.update_layout(title="Tarbimine teenuste kaupa (kWh)")
 
-            fig_csv_solar.add_trace(
-                go.Scatter(
-                    x=df_t["ts"],
-                    y=df_t["kwh"],
-                    mode="lines",
-                    name=f"Tarbimine – {teenus}",
-                    yaxis="y1",
-                    line=dict(color=color)
-                )
-            )
+    # 5) Tarbimine vs Päike
+    if df_cons_solar.empty:
+        fig_cons_solar = go.Figure()
+        fig_cons_solar.update_layout(title="Tarbimine vs Päike – andmeid pole")
+    else:
+        fig_cons_solar = go.Figure()
 
-        # Päikese kiirgus teisel teljel
-        if "shortwave_radiation" in df_csv_solar.columns:
-            fig_csv_solar.add_trace(
-                go.Scatter(
-                    x=df_csv_solar["ts"],
-                    y=df_csv_solar["shortwave_radiation"],
-                    mode="lines",
-                    name="Päikese kiirgus (W/m²)",
-                    yaxis="y2",
-                    line=dict(color="orange", dash="dot")
-                )
-            )
+        # Tarbimine
+        for teenus in df_cons_solar["teenus"].unique():
+            df_t = df_cons_solar[df_cons_solar["teenus"] == teenus]
+            color = SERVICE_COLORS.get(teenus, SERVICE_COLORS["default"])
+            fig_cons_solar.add_trace(go.Scatter(
+                x=df_t["ts"],
+                y=df_t["kwh"],
+                mode="lines",
+                name=f"Tarbimine – {teenus}",
+                yaxis="y1",
+                line=dict(color=color)
+            ))
 
-        fig_csv_solar.update_layout(
-            title="Tarbimine (CSV) ja Päikese kiirgus (W/m²)",
+        # Päike
+        fig_cons_solar.add_trace(go.Scatter(
+            x=df_cons_solar["ts"],
+            y=df_cons_solar["production_mw"],
+            mode="lines",
+            name="Päikese tootmine (MW)",
+            yaxis="y2",
+            line=dict(color="orange", dash="dot")
+        ))
+
+        fig_cons_solar.update_layout(
+            title="Tarbimine vs Päikese tootmine",
             xaxis=dict(title="Aeg"),
             yaxis=dict(title="Tarbimine (kWh)"),
             yaxis2=dict(
-                title="Päikese kiirgus (W/m²)",
+                title="Päikese tootmine (MW)",
                 overlaying="y",
                 side="right"
-            ),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+            )
         )
 
     return (
         fig_weather,
-        fig_om_solar,
         fig_elering,
         fig_price,
-        fig_csv_solar
+        fig_cons,
+        fig_cons_solar
     )
 
 if __name__ == "__main__":
