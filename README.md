@@ -117,6 +117,13 @@ entsoe_wind_15min → (hetkel ei kasutata)
 🔄 Importerite tööloogika
 Kõik importerid:
 
+🔄 Importer_CSV tööloogika
+csv fail päis peab olema : Periood, Tarbimine, Teenus
+järjekord pole oluline, faili nimi pole oluline,
+Veerg teenus täita oma elektrimüüja nimega,
+Näit. "elering" , kõikidele ridadele.
+Tühje ridu olla ei tohi
+
 arvutavad automaatselt eelmise päeva ajavahemiku
 pärivad API‑st
 salvestavad andmed PostgreSQL‑i
